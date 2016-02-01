@@ -1,0 +1,5 @@
+<resources>
+    <integer name="uos_tcp_port">8300</integer>
+    <integer name="uos_tcp_passivePortRange_start">8301</integer>
+    <integer name="uos_tcp_passivePortRange_end">8310</integer>
+</resources>
