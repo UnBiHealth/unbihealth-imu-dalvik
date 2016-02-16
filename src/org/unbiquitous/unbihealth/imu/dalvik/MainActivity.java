@@ -1,22 +1,5 @@
 package org.unbiquitous.unbihealth.imu.dalvik;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.lang.Thread.UncaughtExceptionHandler;
-import java.util.List;
-import java.util.logging.Level;
-
-import org.apache.commons.math3.complex.Quaternion;
-import org.unbiquitous.unbihealth.imu.IMUDriver;
-import org.unbiquitous.unbihealth.imu.dalvik.util.SystemUiHider;
-import org.unbiquitous.uos.core.InitialProperties;
-import org.unbiquitous.uos.core.UOS;
-import org.unbiquitous.uos.core.UOSLogging;
-import org.unbiquitous.uos.core.adaptabitilyEngine.SmartSpaceGateway;
-import org.unbiquitous.uos.core.driverManager.DriverManager;
-import org.unbiquitous.uos.core.driverManager.UosDriver;
-import org.unbiquitous.uos.network.socket.TCPProperties;
-
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
@@ -24,6 +7,8 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.net.DhcpInfo;
+import android.net.wifi.WifiManager;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
@@ -31,8 +16,21 @@ import android.os.Handler;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
-import org.unbiquitous.uos.network.socket.connectionManager.UDPConnectionManager;
+import org.apache.commons.math3.complex.Quaternion;
+import org.unbiquitous.unbihealth.imu.IMUDriver;
+import org.unbiquitous.unbihealth.imu.dalvik.util.SystemUiHider;
+import org.unbiquitous.uos.core.InitialProperties;
+import org.unbiquitous.uos.core.UOS;
+import org.unbiquitous.uos.core.UOSLogging;
+import org.unbiquitous.uos.core.adaptabitilyEngine.SmartSpaceGateway;
+import org.unbiquitous.uos.core.driverManager.UosDriver;
 import org.unbiquitous.uos.network.socket.radar.MulticastRadar;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.lang.Thread.UncaughtExceptionHandler;
+import java.util.List;
+import java.util.logging.Level;
 
 /**
  * An example full-screen activity that shows and hides the system UI (i.e.
@@ -169,14 +167,15 @@ public class MainActivity extends Activity implements SensorEventListener {
         mStatusView.setText(R.string.msg_starting_uos);
 
         @SuppressWarnings("serial")
-        InitialProperties settings = new TCPProperties() {
+        InitialProperties settings = new MulticastRadar.Properties() {
             {
+                put("ubiquitos.multicast.broadcastAddr", getBroadcastAddr());
                 setPort(getResources().getInteger(R.integer.uos_tcp_port));
                 setPassivePortRange(getResources().getInteger(R.integer.uos_tcp_passivePortRange_start), getResources().getInteger(R.integer.uos_tcp_passivePortRange_end));
-                addRadar(MulticastRadar.class, UDPConnectionManager.class);
                 addDriver(IMUDriver.class, "imudriver42");
-                put(IMUDriver.SENSOR_ID_KEY, "arm");
-                put(IMUDriver.SENSITIVITY_KEY, 0.001);
+                put(IMUDriver.DEFAULT_SENSOR_ID_KEY, "arm");
+                put(IMUDriver.VALID_IDS_KEY, "forearm");
+                put(IMUDriver.SENSITIVITY_KEY, 0.01);
             }
         };
         mUOS = new UOS();
@@ -192,6 +191,18 @@ public class MainActivity extends Activity implements SensorEventListener {
         UOSLogging.getLogger().info("sensor: " + mSensor);
     }
 
+    private String getBroadcastAddr() {
+        WifiManager wifi = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+        DhcpInfo dhcp = wifi.getDhcpInfo();
+        int addr = (dhcp.ipAddress & dhcp.netmask) | ~dhcp.netmask;
+        StringBuilder sb = new StringBuilder(Integer.toString(addr & 0xFF));
+        for (int k = 1; k < 4; ++k) {
+            sb.append(".");
+            sb.append((addr >> (k << 3)) & 0xFF);
+        }
+        return sb.toString();
+    }
+
     @Override
     protected void onPostCreate(Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
@@ -205,14 +216,12 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     protected void onPause() {
         super.onPause();
-
         mSensorManager.unregisterListener(this);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
         if (mSensor != null)
             mSensorManager.registerListener(this, mSensor, SensorManager.SENSOR_DELAY_NORMAL);
     }
