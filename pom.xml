@@ -24,6 +24,11 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>org.unbiquitous</groupId>
+            <artifactId>uos-socket-plugin</artifactId>
+            <version>3.2.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
             <groupId>org.unbiquitous.unbihealth</groupId>
             <artifactId>unbihealth-imu</artifactId>
             <version>1.0-SNAPSHOT</version>
