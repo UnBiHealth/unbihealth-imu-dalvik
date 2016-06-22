@@ -1,6 +1,9 @@
 <resources>
     <string name="app_name">Dalvik IMU Sensor</string>
+    <string name="host_ip_title">Host IP:</string>
+    <string name="listener_title">Listener:</string>
     <string name="sensor_data_title">Sensor:</string>
+    <string name="tare_btn_title">Tare</string>
     <string name="status_title">Status:</string>
     <string name="msg_starting_uos">Starting UOS...</string>
     <string name="sensor_change_sensitivity">0.0001</string>

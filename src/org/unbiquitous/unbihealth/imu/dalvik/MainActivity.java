@@ -13,23 +13,38 @@ import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.Spinner;
 import android.widget.TextView;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.math3.complex.Quaternion;
 import org.unbiquitous.unbihealth.imu.IMUDriver;
+import org.unbiquitous.unbihealth.imu.dalvik.util.IPTextWatcher;
 import org.unbiquitous.unbihealth.imu.dalvik.util.SystemUiHider;
 import org.unbiquitous.uos.core.InitialProperties;
 import org.unbiquitous.uos.core.UOS;
 import org.unbiquitous.uos.core.UOSLogging;
 import org.unbiquitous.uos.core.adaptabitilyEngine.SmartSpaceGateway;
 import org.unbiquitous.uos.core.driverManager.UosDriver;
+import org.unbiquitous.uos.core.messageEngine.dataType.UpDevice;
+import org.unbiquitous.uos.core.messageEngine.messages.Call;
+import org.unbiquitous.uos.core.messageEngine.messages.Response;
 import org.unbiquitous.uos.network.socket.radar.MulticastRadar;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.Thread.UncaughtExceptionHandler;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Level;
 
 /**
@@ -62,46 +77,73 @@ public class MainActivity extends Activity implements SensorEventListener {
      */
     private static final int HIDER_FLAGS = SystemUiHider.FLAG_HIDE_NAVIGATION;
 
+    private static final int UOS_PORT = 8300;
+
     /**
      * The instance of the {@link SystemUiHider} for this activity.
      */
-    private SystemUiHider mSystemUiHider;
-    private SensorManager mSensorManager;
-    private Sensor mSensor;
-    private TextView mSensorDataView;
-    private TextView mStatusView;
-    private UOS mUOS;
-    private IMUDriver mIMUDriver;
+    private SystemUiHider systemUiHider;
+    private SensorManager sensorManager;
+    private Sensor sensor;
+    private EditText txtHostIP;
+    private Spinner spnListeners;
+    private ArrayAdapter<String> spnListenersAdapter;
+    private EditText txtNewListener;
+    private ImageButton btnAddListener;
+    private Button btnTare;
+    private TextView sensorDataView;
+    private TextView statusView;
+    private UOS uos;
+    private IMUDriver imuDriver;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        UOSLogging.setLevel(Level.ALL);
+        UOSLogging.setLevel(Level.INFO);
 
         setContentView(R.layout.activity_main);
 
-        final View controlsView = findViewById(R.id.fullscreen_content_controls);
-        mSensorDataView = (TextView) findViewById(R.id.sensor_data_view);
+        txtHostIP = (EditText) findViewById(R.id.txt_host_ip);
 
-        mStatusView = (TextView) findViewById(R.id.status_view);
+        spnListeners = (Spinner) findViewById(R.id.spn_listeners);
+        spnListeners.setAdapter(spnListenersAdapter = new ListenerListAdapter());
+
+        txtNewListener = (EditText) findViewById(R.id.txt_new_listener);
+        txtNewListener.addTextChangedListener(new IPTextWatcher());
+
+        btnAddListener = (ImageButton) findViewById(R.id.btn_add_listener);
+
+        btnTare = (Button) findViewById(R.id.btn_tare);
+        btnTare.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (imuDriver != null)
+                    imuDriver.tare(null, null, null);
+            }
+        });
+
+        final View controlsView = findViewById(R.id.fullscreen_content_controls);
+        sensorDataView = (TextView) findViewById(R.id.sensor_data_view);
+
+        statusView = (TextView) findViewById(R.id.status_view);
         Thread.setDefaultUncaughtExceptionHandler(new UncaughtExceptionHandler() {
             public void uncaughtException(Thread t, Throwable e) {
                 StringWriter wr = new StringWriter();
                 e.printStackTrace(new PrintWriter(wr));
-                mStatusView.setText(wr.toString());
+                statusView.setText(wr.toString());
                 UOSLogging.getLogger().log(Level.SEVERE, "Error!", e);
             }
         });
 
         // Set up an instance of SystemUiHider to control the system UI for
         // this activity.
-        mSystemUiHider = SystemUiHider.getInstance(this, mSensorDataView, HIDER_FLAGS);
-        mSystemUiHider.setup();
-        mSystemUiHider.setOnVisibilityChangeListener(new SystemUiHider.OnVisibilityChangeListener() {
+        systemUiHider = SystemUiHider.getInstance(this, sensorDataView, HIDER_FLAGS);
+        systemUiHider.setup();
+        systemUiHider.setOnVisibilityChangeListener(new SystemUiHider.OnVisibilityChangeListener() {
             // Cached values.
-            int mControlsHeight;
-            int mShortAnimTime;
+            int controlsHeight;
+            int shortAnimTime;
 
             @Override
             @TargetApi(Build.VERSION_CODES.HONEYCOMB_MR2)
@@ -111,13 +153,13 @@ public class MainActivity extends Activity implements SensorEventListener {
                     // (Honeycomb MR2 and later), use it to animate the
                     // in-layout UI controls at the bottom of the
                     // screen.
-                    if (mControlsHeight == 0) {
-                        mControlsHeight = controlsView.getHeight();
+                    if (controlsHeight == 0) {
+                        controlsHeight = controlsView.getHeight();
                     }
-                    if (mShortAnimTime == 0) {
-                        mShortAnimTime = getResources().getInteger(android.R.integer.config_shortAnimTime);
+                    if (shortAnimTime == 0) {
+                        shortAnimTime = getResources().getInteger(android.R.integer.config_shortAnimTime);
                     }
-                    controlsView.animate().translationY(visible ? 0 : mControlsHeight).setDuration(mShortAnimTime);
+                    controlsView.animate().translationY(visible ? 0 : controlsHeight).setDuration(shortAnimTime);
                 } else {
                     // If the ViewPropertyAnimator APIs aren't
                     // available, simply show or hide the in-layout UI
@@ -133,20 +175,20 @@ public class MainActivity extends Activity implements SensorEventListener {
         });
 
         // Set up the user interaction to manually show or hide the system UI.
-        mSensorDataView.setOnClickListener(new View.OnClickListener() {
+        sensorDataView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if (TOGGLE_ON_CLICK) {
-                    mSystemUiHider.toggle();
+                    systemUiHider.toggle();
                 } else {
-                    mSystemUiHider.show();
+                    systemUiHider.show();
                 }
             }
         });
 
-        mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        //mSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-        mSensor = getRotationVectorSensor();
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        //sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        sensor = getRotationVectorSensor();
 
         new AsyncTask<Void, Void, Void>() {
             protected Void doInBackground(Void... params) {
@@ -157,38 +199,41 @@ public class MainActivity extends Activity implements SensorEventListener {
     }
 
     private Sensor getRotationVectorSensor() {
-        List<Sensor> list = mSensorManager.getSensorList(Sensor.TYPE_ROTATION_VECTOR);
+        List<Sensor> list = sensorManager.getSensorList(Sensor.TYPE_ROTATION_VECTOR);
         if (!list.isEmpty())
             return list.get(0);
         return null;
     }
 
     private void runUOS() {
-        mStatusView.setText(R.string.msg_starting_uos);
+        //m,u5UOSLogging.setLevel(Level.FINE);
+        statusView.setText(R.string.msg_starting_uos);
 
         @SuppressWarnings("serial")
         InitialProperties settings = new MulticastRadar.Properties() {
             {
                 put("ubiquitos.multicast.broadcastAddr", getBroadcastAddr());
-                setPort(getResources().getInteger(R.integer.uos_tcp_port));
+                put("ubiquitos.multicast.beaconFrequencyInSeconds", 10);
+                setPort(UOS_PORT);
                 setPassivePortRange(getResources().getInteger(R.integer.uos_tcp_passivePortRange_start), getResources().getInteger(R.integer.uos_tcp_passivePortRange_end));
                 addDriver(IMUDriver.class, "imudriver42");
-                put(IMUDriver.DEFAULT_SENSOR_ID_KEY, "arm");
-                put(IMUDriver.VALID_IDS_KEY, "forearm");
-                put(IMUDriver.SENSITIVITY_KEY, 0.01);
+                put(IMUDriver.DEFAULT_SENSOR_ID_KEY, "dalvik-imu");
+                put(IMUDriver.SENSITIVITY_KEY, 0.001);
             }
         };
-        mUOS = new UOS();
-        mUOS.start(settings);
+        uos = new UOS();
+        uos.start(settings);
+        try {
+            txtHostIP.setText(uos.getGateway().getCurrentDevice().getNetworks().get(0).getNetworkAddress());
+        } catch (Throwable t) {
+        }
 
-        mIMUDriver = null;
-        for (UosDriver d : ((SmartSpaceGateway) mUOS.getGateway()).getDriverManager().listDrivers())
+        imuDriver = null;
+        for (UosDriver d : ((SmartSpaceGateway) uos.getGateway()).getDriverManager().listDrivers())
             if (IMUDriver.DRIVER_NAME.equals(d.getDriver().getName()) && (d instanceof IMUDriver)) {
-                mIMUDriver = (IMUDriver) d;
+                imuDriver = (IMUDriver) d;
                 break;
             }
-
-        UOSLogging.getLogger().info("sensor: " + mSensor);
     }
 
     private String getBroadcastAddr() {
@@ -216,20 +261,19 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     protected void onPause() {
         super.onPause();
-        mSensorManager.unregisterListener(this);
+        sensorManager.unregisterListener(this);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (mSensor != null)
-            mSensorManager.registerListener(this, mSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        if (sensor != null)
+            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL);
     }
 
     @Override
     public void onSensorChanged(SensorEvent event) {
         StringBuilder sb = new StringBuilder();
-        sb.append("sensor event: " + event.sensor.getType() + "\n");
         if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
             float[] values = event.values;
             if (values != null) {
@@ -245,10 +289,10 @@ public class MainActivity extends Activity implements SensorEventListener {
                 sb.append("w: ");
                 sb.append(values[3]);
                 sb.append("\n");
-                mSensorDataView.setText(sb.toString());
+                sensorDataView.setText(sb.toString());
                 try {
-                    if (mIMUDriver != null)
-                        mIMUDriver.sensorChanged(new Quaternion(values[3], values[0], values[1], values[2]), event.timestamp);
+                    if (imuDriver != null)
+                        imuDriver.sensorChanged(new Quaternion(values[3], values[0], values[1], values[2]));
                 } catch (Throwable t) {
                     UOSLogging.getLogger().log(Level.SEVERE, "Error triggering IMU driver sensor change.", t);
                 }
@@ -260,26 +304,11 @@ public class MainActivity extends Activity implements SensorEventListener {
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
 
-    /**
-     * Touch listener to use for in-layout UI controls to delay hiding the
-     * system UI. This is to prevent the jarring behavior of controls going away
-     * while interacting with activity UI.
-     */
-    View.OnTouchListener mDelayHideTouchListener = new View.OnTouchListener() {
-        @Override
-        public boolean onTouch(View view, MotionEvent motionEvent) {
-            if (AUTO_HIDE) {
-                delayedHide(AUTO_HIDE_DELAY_MILLIS);
-            }
-            return false;
-        }
-    };
-
-    Handler mHideHandler = new Handler();
-    Runnable mHideRunnable = new Runnable() {
+    Handler hideHandler = new Handler();
+    Runnable hideRunnable = new Runnable() {
         @Override
         public void run() {
-            mSystemUiHider.hide();
+            systemUiHider.hide();
         }
     };
 
@@ -288,7 +317,128 @@ public class MainActivity extends Activity implements SensorEventListener {
      * previously scheduled calls.
      */
     private void delayedHide(int delayMillis) {
-        mHideHandler.removeCallbacks(mHideRunnable);
-        mHideHandler.postDelayed(mHideRunnable, delayMillis);
+        hideHandler.removeCallbacks(hideRunnable);
+        hideHandler.postDelayed(hideRunnable, delayMillis);
+    }
+
+    private class ListenerListAdapter extends ArrayAdapter<String> {
+        public ListenerListAdapter() {
+            super(MainActivity.this, android.R.layout.simple_spinner_item);
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        }
+
+        @Override
+        public View getDropDownView(int pos, View view, ViewGroup parent) {
+            if ((pos == 0) && (spnListeners.getSelectedItemPosition() < 1)) {
+                TextView tv = new TextView(getContext());
+                tv.setVisibility(View.GONE);
+                view = tv;
+            } else
+                view = super.getDropDownView(pos, null, parent);
+
+            return view;
+        }
+    }
+
+    // Bits for the listener status integer.
+    // If bit at DEAD position is set, then the listener's ip doesn't respond to service calls.
+    // If bit at FOREIGN_NW position is set, then the listener's ip is from a different network than current one.
+    private static int LST_BIT_DEAD = 0;
+    private static int LST_BIT_FOREIGN_NW = 1;
+    private Map<String, Integer> listenerStatus = new HashMap<>();
+    private List<String> listeners = new ArrayList<>();
+    private Object _listener_lock = new Object();
+    private Comparator<String> listenerComparator = new ListenerComparator();
+
+    private void checkListeners() {
+        // Lists the current stored listeners.
+        String[] listeners;
+        synchronized (_listener_lock) {
+            int len = Math.max(0, this.listeners.size() - 1);
+            listeners = new String[len];
+            for (int i = 0; i < len; ++i)
+                listeners[i] = this.listeners.get(i + 1);
+        }
+
+        // Gets current subnet.
+        int ip, netmask = 0xFFFFFFFF, subnet;
+        DhcpInfo dhcp = ((WifiManager) getSystemService(Context.WIFI_SERVICE)).getDhcpInfo();
+        if (dhcp != null) {
+            netmask = dhcp.netmask;
+            ip = dhcp.ipAddress;
+        } else
+            ip = 0;
+        subnet = ip & netmask;
+
+        // Checks the status of each listener.
+        for (String listener : listeners) {
+            int status = 0;
+
+            // Extracts listener data.
+            String[] data = listener.split(":");
+            int port = UOS_PORT;
+            ip = 0xFFFFFFFF;
+            try {
+                ip = toInt(InetAddress.getByName(data[0]));
+                if (data.length > 1)
+                    port = Integer.parseInt(data[1]);
+            } catch (Throwable t) {
+            }
+
+            // Is it in the same network?
+            if (subnet == (ip ^ netmask)) {
+                status |= (1 << LST_BIT_DEAD); // assumes it's dead
+                // Does it respond to a basic service call?
+                try {
+                    UpDevice device = new UpDevice(data[0]);
+                    device.addNetworkInterface(data[0] + ":" + port, "Ethernet:TCP");
+                    Response r = uos.getGateway().callService(device, new Call("uos.DeviceDriver", "listDrivers"));
+                    if ((r != null) && StringUtils.isBlank(r.getError()))
+                        status &= (~(1 << LST_BIT_DEAD)); // it's alive!
+                } catch (Throwable t) {
+                }
+            } else
+                status |= (1 << LST_BIT_FOREIGN_NW);
+
+            synchronized (_listener_lock) {
+                listenerStatus.put(listener, status);
+            }
+        }
+    }
+
+    private static int toInt(InetAddress inetAddress) {
+        byte[] addr = inetAddress.getAddress();
+        int ip = 0;
+        for (int i = 0; i < addr.length; ++i, ip <<= 8)
+            ip |= addr[i];
+        return ip;
+    }
+
+    private class ListenerComparator implements Comparator<String> {
+        @Override
+        public int compare(String a, String b) {
+            int ret = 0;
+
+            // First let's check the statuses, if available.
+            Integer sta, stb;
+            synchronized (_listener_lock) {
+                sta = listenerStatus.get(a);
+                stb = listenerStatus.get(b);
+            }
+            if (sta == null) {
+                if (stb != null)
+                    return -1; // 'a' wasn't added yet, 'b' has, so 'a' should be listed first
+            } else {
+                if (stb == null)
+                    return 1;  // 'b' wasn't added yet, 'a' has, so 'b' should be listed first
+                ret = sta.compareTo(stb); // both are not null, first compare status
+            }
+
+            // If both have the same status, then just sort alphabetically.
+            if (ret == 0)
+                ret = a.compareTo(b);
+
+            return ret;
+        }
     }
 }

@@ -7,7 +7,7 @@
     <version>1.0-SNAPSHOT</version>
     <packaging>apk</packaging>
     <name>Dalvik IMU Sensor</name>
-    <description>A simple app that uses the Android sensors to generate IMU Driver events</description>
+    <description>A simple application that uses the Android sensors to generate IMU Driver events</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
